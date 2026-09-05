@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>YWAM Systems Agent</title>
+<style>
+  :root {
+    --bg: #0f1115; --panel: #171a21; --border: #2a2e37;
+    --text: #e8eaed; --muted: #9aa0aa; --accent: #4f8cff;
+    --bubble-user: #2a3a5c; --bubble-ai: #1f232c;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+    background: var(--bg); color: var(--text);
+    display: flex; flex-direction: column; height: 100vh;
+  }
+  header {
+    padding: 14px 20px; border-bottom: 1px solid var(--border);
+    font-weight: 600; font-size: 15px;
+  }
+  header span { color: var(--muted); font-weight: 400; font-size: 13px; }
+  #log {
+    flex: 1; overflow-y: auto; padding: 20px;
+    display: flex; flex-direction: column; gap: 12px;
+  }
+  .msg { max-width: 75%; padding: 10px 14px; border-radius: 12px; line-height: 1.45; white-space: pre-wrap; }
+  .user { align-self: flex-end; background: var(--bubble-user); }
+  .ai { align-self: flex-start; background: var(--bubble-ai); border: 1px solid var(--border); }
+  .ai.pending { color: var(--muted); font-style: italic; }
+  .file-link {
+    display: inline-block; margin-top: 8px; padding: 6px 10px;
+    background: var(--accent); color: white; border-radius: 8px;
+    text-decoration: none; font-size: 13px;
+  }
+  #inputRow {
+    display: flex; gap: 10px; padding: 14px 20px;
+    border-top: 1px solid var(--border); background: var(--panel);
+  }
+  #inputRow input {
+    flex: 1; padding: 12px 14px; border-radius: 10px; border: 1px solid var(--border);
+    background: var(--bg); color: var(--text); font-size: 14px;
+  }
+  #inputRow input:focus { outline: none; border-color: var(--accent); }
+  #inputRow button {
+    padding: 12px 18px; border-radius: 10px; border: none;
+    background: var(--accent); color: white; font-weight: 600; cursor: pointer;
+  }
+  #inputRow button:disabled { opacity: 0.5; cursor: default; }
+</style>
+</head>
+<body>
+  <header>
+    YWAM Systems Agent
+    <span>— one prompt, both systems (YWAMMUT + Tailoring)</span>
+  </header>
+  <div id="log"></div>
+  <div id="inputRow">
+    <input id="input" type="text" placeholder="e.g. Register a new tailoring student named Priya, mobile 9876543210, course Basic Tailoring" autofocus />
+    <button id="send">Send</button>
+  </div>
+
+<script>
+  const log = document.getElementById("log");
+  const input = document.getElementById("input");
+  const sendBtn = document.getElementById("send");
+  let history = [];
+
+  function addMessage(role, text) {
+    const div = document.createElement("div");
+    div.className = "msg " + role;
+    div.textContent = text;
+    log.appendChild(div);
+    log.scrollTop = log.scrollHeight;
+    return div;
+  }
+
+  function addFileLink(container, filename, base64) {
+    const link = document.createElement("a");
+    link.className = "file-link";
+    link.href = "data:application/pdf;base64," + base64;
+    link.download = filename;
+    link.textContent = "⬇ Download " + filename;
+    container.appendChild(document.createElement("br"));
+    container.appendChild(link);
+  }
+
+  async function send() {
+    const text = input.value.trim();
+    if (!text) return;
+    input.value = "";
+    sendBtn.disabled = true;
+
+    addMessage("user", text);
+    const pending = addMessage("ai pending", "Working on it…");
+
+    try {
+      const res = await fetch("/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: text, history }),
+      });
+      const data = await res.json();
+
+      pending.classList.remove("pending");
+      pending.textContent = data.reply || "(no response)";
+      (data.files || []).forEach(f => addFileLink(pending, f.filename, f.base64));
+
+      history.push({ role: "user", content: text });
+      history.push({ role: "assistant", content: data.reply || "" });
+    } catch (err) {
+      pending.classList.remove("pending");
+      pending.textContent = "Error: " + err.message;
+    } finally {
+      sendBtn.disabled = false;
+      input.focus();
+    }
+  }
+
+  sendBtn.addEventListener("click", send);
+  input.addEventListener("keydown", (e) => { if (e.key === "Enter") send(); });
+</script>
+</body>
+</html>
