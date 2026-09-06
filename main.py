@@ -16,7 +16,7 @@ import os
 import json
 import logging
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -31,15 +31,30 @@ app = FastAPI(title="YWAM Systems Agent")
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    # Any unhandled error (Groq API errors, tool failures, etc.) now comes
+    # back as JSON in the same shape as a normal /chat response, so the
+    # frontend's res.json() never chokes on a plain-text traceback again.
+    logger.exception("Unhandled error in %s", request.url.path)
+    return JSONResponse(
+        status_code=500,
+        content={"error": str(exc), "reply": "", "files": []},
+    )
+
+
 @app.get("/")
 def ui():
     return FileResponse("static/index.html")
 
 
 client = Groq(api_key=os.environ["GROQ_API_KEY"])
-# Check console.groq.com/docs/models for the current recommended
-# tool-use model — this one is a solid free-tier default as of writing.
-MODEL = os.environ.get("GROQ_MODEL", "llama-3.3-70b-versatile")
+# Groq deprecated llama-3.3-70b-versatile and llama-3.1-8b-instant
+# (announced June 17, 2026). Migrated default to openai/gpt-oss-120b,
+# their recommended replacement for general-purpose + tool-calling use.
+# You can still override via the GROQ_MODEL env var without a code change.
+# Check console.groq.com/docs/models for the current recommended model.
+MODEL = os.environ.get("GROQ_MODEL", "openai/gpt-oss-120b")
 
 SYSTEM_PROMPT = """You are an operations assistant with direct tool access to two
 independent systems used by YWAM Trichy:
