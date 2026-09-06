@@ -120,9 +120,11 @@ def chat(req: ChatRequest):
                 args = json.loads(tc.function.arguments or "{}")
             except json.JSONDecodeError:
                 args = {}
-            logger.info("Tool call: %s(%s)", name, args)
+                        logger.info("Tool call: %s(%s)", name, args)
             result = dispatch_tool(name, args)
+            logger.info("Tool result: %s", result)
 
+            # Certificate tool returns pdf_base64 — pull it out so it
             # Certificate tool returns pdf_base64 — pull it out so it
             # doesn't get stuffed back into the model's context as a huge
             # base64 blob, and surface it to the caller instead.
