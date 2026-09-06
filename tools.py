@@ -6,6 +6,16 @@ Add a new capability by: (1) adding an entry to TOOLS with a clear
 description and JSON schema, and (2) adding the matching branch in
 dispatch_tool(). Keep each tool narrow and single-purpose — that's what
 makes the model's tool choice reliable.
+
+NOTE on nullable optional fields: some models (e.g. Groq's
+openai/gpt-oss-120b) always fill in every property in the schema, using
+null for any optional one they have no value for. If an optional field's
+schema only allows "string", Groq's strict tool-call validator rejects
+the whole call with a 400 before it ever reaches dispatch_tool(). So every
+optional (non-required) field below is typed as ["string", "null"] (or
+["integer", "null"] / ["number", "null"]) to allow that. dispatch_tool()
+also strips None values before sending anything downstream, as a second
+line of defense so the real backends never receive literal nulls.
 """
 import os
 import requests
@@ -17,6 +27,12 @@ TAILORING_BASE = os.environ["TAILORING_BASE_URL"].rstrip("/")   # e.g. https://y
 TAILORING_KEY = os.environ["TAILORING_API_KEY"]
 
 TIMEOUT = 20
+
+
+def _clean(args):
+    """Drop keys whose value is None, so downstream APIs never see literal
+    nulls for fields the model left unset."""
+    return {k: v for k, v in args.items() if v is not None}
 
 
 def _ywammut(method, path, **kwargs):
@@ -54,10 +70,33 @@ def _tool(name, description, properties, required=None):
     }
 
 
+def _opt_str(description=None):
+    """Optional string field — nullable so models that fill in every
+    property with null for unset optional fields don't fail validation."""
+    d = {"type": ["string", "null"]}
+    if description:
+        d["description"] = description
+    return d
+
+
+def _opt_int(description=None):
+    d = {"type": ["integer", "null"]}
+    if description:
+        d["description"] = description
+    return d
+
+
+def _opt_num(description=None):
+    d = {"type": ["number", "null"]}
+    if description:
+        d["description"] = description
+    return d
+
+
 TOOLS = [
     # ---------------- YWAMMUT ----------------
     _tool("list_members", "List YWAMMUT members, optionally filtered by name search. Returns balances.",
-          {"q": {"type": "string", "description": "Optional name search"}}),
+          {"q": _opt_str("Optional name search")}),
 
     _tool("get_member", "Get full detail for one YWAMMUT member: profile, loans, transactions, balance.",
           {"member_id": {"type": "string"}}, ["member_id"]),
@@ -65,10 +104,10 @@ TOOLS = [
     _tool("create_member", "Create a new YWAMMUT member/missionary record.",
           {
               "name": {"type": "string"},
-              "phone": {"type": "string"},
-              "email": {"type": "string"},
-              "company": {"type": "string"},
-              "notes": {"type": "string"},
+              "phone": _opt_str(),
+              "email": _opt_str(),
+              "company": _opt_str(),
+              "notes": _opt_str(),
           }, ["name"]),
 
     _tool("create_loan", "Create a loan for a YWAMMUT member.",
@@ -76,8 +115,8 @@ TOOLS = [
               "client_id": {"type": "string"},
               "amount": {"type": "number"},
               "due_date": {"type": "string", "description": "YYYY-MM-DD"},
-              "date_given": {"type": "string", "description": "YYYY-MM-DD, defaults to today"},
-              "description": {"type": "string"},
+              "date_given": _opt_str("YYYY-MM-DD, defaults to today"),
+              "description": _opt_str(),
           }, ["client_id", "amount", "due_date"]),
 
     _tool("record_transaction", "Record a contribution (income) or expense against a YWAMMUT member.",
@@ -85,17 +124,17 @@ TOOLS = [
               "client_id": {"type": "string"},
               "type": {"type": "string", "enum": ["income", "expense"]},
               "amount": {"type": "number"},
-              "date": {"type": "string", "description": "YYYY-MM-DD, defaults to today"},
-              "description": {"type": "string"},
-              "category": {"type": "string"},
+              "date": _opt_str("YYYY-MM-DD, defaults to today"),
+              "description": _opt_str(),
+              "category": _opt_str(),
           }, ["client_id", "type", "amount"]),
 
     # ---------------- Tailoring ----------------
     _tool("list_students", "List Tailoring Centre students, optionally filtered by status, course, or name.",
           {
-              "status": {"type": "string"},
-              "course": {"type": "string"},
-              "q": {"type": "string"},
+              "status": _opt_str(),
+              "course": _opt_str(),
+              "q": _opt_str(),
           }),
 
     _tool("get_student", "Get full detail for one Tailoring Centre student, including fee history.",
@@ -105,14 +144,14 @@ TOOLS = [
           {
               "name": {"type": "string"},
               "mobile": {"type": "string"},
-              "email": {"type": "string"},
+              "email": _opt_str(),
               "course": {"type": "string"},
-              "batch": {"type": "string"},
-              "address": {"type": "string"},
-              "admission_date": {"type": "string", "description": "YYYY-MM-DD"},
-              "start_date": {"type": "string", "description": "YYYY-MM-DD"},
-              "duration_months": {"type": "integer"},
-              "monthly_fee": {"type": "number"},
+              "batch": _opt_str(),
+              "address": _opt_str(),
+              "admission_date": _opt_str("YYYY-MM-DD"),
+              "start_date": _opt_str("YYYY-MM-DD"),
+              "duration_months": _opt_int(),
+              "monthly_fee": _opt_num(),
           }, ["name", "mobile", "course"]),
 
     _tool("mark_attendance", "Mark a Tailoring Centre student Present or Absent for a given date.",
@@ -127,9 +166,9 @@ TOOLS = [
               "student_id": {"type": "integer"},
               "month": {"type": "string", "description": "e.g. '2026-09'"},
               "amount_paid": {"type": "number"},
-              "payment_date": {"type": "string", "description": "YYYY-MM-DD, defaults to today"},
-              "mode": {"type": "string", "description": "e.g. Cash, UPI"},
-              "remarks": {"type": "string"},
+              "payment_date": _opt_str("YYYY-MM-DD, defaults to today"),
+              "mode": _opt_str("e.g. Cash, UPI"),
+              "remarks": _opt_str(),
           }, ["student_id", "month", "amount_paid"]),
 
     _tool("issue_certificate",
@@ -137,18 +176,19 @@ TOOLS = [
           "The student must already have a photo on file.",
           {
               "student_id": {"type": "integer"},
-              "course": {"type": "string"},
-              "duration_months": {"type": "integer"},
+              "course": _opt_str(),
+              "duration_months": _opt_int(),
               "start_date": {"type": "string", "description": "YYYY-MM-DD"},
-              "end_date": {"type": "string", "description": "YYYY-MM-DD, auto-computed if omitted"},
+              "end_date": _opt_str("YYYY-MM-DD, auto-computed if omitted"),
           }, ["student_id", "start_date"]),
 ]
 
 
 def dispatch_tool(name, args):
+    args = _clean(args)
     try:
         if name == "list_members":
-            return _ywammut("GET", "/api/agent/missionary", params={"q": args.get("q")} if args.get("q") else None)
+            return _ywammut("GET", "/api/agent/missionary", params=args or None)
         if name == "get_member":
             return _ywammut("GET", f"/api/agent/missionary/{args['member_id']}")
         if name == "create_member":
@@ -159,7 +199,7 @@ def dispatch_tool(name, args):
             return _ywammut("POST", "/api/agent/transactions", json=args)
 
         if name == "list_students":
-            return _tailoring("GET", "/api/agent/students", params=args)
+            return _tailoring("GET", "/api/agent/students", params=args or None)
         if name == "get_student":
             return _tailoring("GET", f"/api/agent/students/{args['student_id']}")
         if name == "create_student":
